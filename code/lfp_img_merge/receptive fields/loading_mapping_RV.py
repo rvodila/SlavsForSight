@@ -64,9 +64,6 @@ rootpath = r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root
 
 os.chdir(rootpath)
 
-# %%
-# %%
-
 #%% Function definition
 
 def plot_all_RFs(horizontal_pos_MaxResponses_mean, vertical_pos_MaxResponses_mean, sizes, goodIDs, allColors, markerSize, offSet, text = False):
@@ -245,6 +242,8 @@ def plot_all_RFs(horizontal_pos_MaxResponses_mean, vertical_pos_MaxResponses_mea
 
 # Define the path to the 'mapping.pkl' file within the 'results' folder
 #rootpath = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING"  # Ensure this is your correct rootpath
+rootpath = r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight\code\NIN_canon\MAPPING"
+
 mapping_file_path = os.path.join(rootpath, 'results', 'mapping_MrNilson.pkl')
 
 with open(mapping_file_path, 'rb') as file:
@@ -253,7 +252,116 @@ with open(mapping_file_path, 'rb') as file:
 print("Keys in 'map_nilson':")
 for key in map_nilson.keys():
     print(key)
-    
+
+#%% Build and save ground-truth RF data for later comparison
+
+E = 1024  # number of channels / electrodes
+assert map_nilson['RFX'].shape[0] == E
+
+# area labels like in plot_all_RFs
+AREA = ['V1'] * (64 * 8) + ['V4'] * (64 * 4) + ['IT'] * (64 * 4)
+
+# channel indices (0-based and 1-based for convenience)
+channel_idx_0based = np.arange(E)          # 0..1023
+channel_idx_1based = np.arange(1, E + 1)   # 1..1024
+
+# a simple "good" mask similar to what you were using before
+goodIDs_ground_truth = (
+    ~np.isnan(map_nilson['RFX']) &
+    ~np.isnan(map_nilson['RFY']) &
+    ~np.isnan(map_nilson['STDX']) &
+    ~np.isnan(map_nilson['STDY'])
+)
+
+ground_truth = {
+    # bookkeeping / indices
+    'channel_idx_0based': channel_idx_0based,
+    'channel_idx_1based': channel_idx_1based,
+
+    # mapping/meta info
+    'AREA': np.array(AREA, dtype=object),             # V1/V4/IT per channel
+    'electrodeNumbers': map_nilson.get('electrodeNumbers', None),
+    'arrayNumbers':     map_nilson.get('arrayNumbers', None),
+    'arrayColor':       map_nilson.get('arrayColor', None),   # RGB per channel
+
+    # visual RF (ground-truth)
+    'RFX_deg': map_nilson['RFX'],        # RF center X in visual space (deg)
+    'RFY_deg': map_nilson['RFY'],        # RF center Y in visual space (deg)
+    'STDX_deg': map_nilson['STDX'],      # RF size X (deg)
+    'STDY_deg': map_nilson['STDY'],      # RF size Y (deg)
+    'R2': map_nilson.get('R2', None),    # fit quality per RF
+
+    # cortical positions (for retinotopy checks later)
+    'cortical_XY': map_nilson.get('electrodeXYPositions', None),
+
+    # mask of valid RFs according to simple criteria above
+    'goodIDs': goodIDs_ground_truth,
+}
+
+# choose a save path (inside the same MAPPING/results folder)
+gt_save_path = os.path.join(r"E:\radboud\Masters Thesis\analysis\TVSD\monkeyN\Exploration\ReceptiveFields\ground truth",  "nilson_RF_ground_truth.npz")
+
+np.savez_compressed(gt_save_path, **ground_truth)
+print(f"[GROUND TRUTH] Saved RF ground-truth data to: {gt_save_path}")
+
+#%%
+## Ground-truth RF data structure (`nilson_RF_ground_truth.npz`)
+'''
+We save the receptive field **ground truth** from the original Nilson mapping into a single compressed `.npz` file:
+
+`nilson_RF_ground_truth.npz`
+
+This file contains the following arrays (all of length 1024 unless noted):
+
+### Indexing / bookkeeping
+- `channel_idx_0based`  
+  Integer array `[0, 1, 2, ..., 1023]`.  
+  Useful if you want to index channels in Python style.
+
+- `channel_idx_1based`  
+  Integer array `[1, 2, 3, ..., 1024]`.  
+  Matches the conventional 1-based channel numbering used in the lab.
+
+### Area & hardware mapping
+- `AREA`  
+  String array of labels: `'V1'`, `'V4'`, or `'IT'` for each channel.
+
+- `electrodeNumbers`  
+  Integer array with the electrode number assigned to each channel (from the original mapping file).
+
+- `arrayNumbers`  
+  Integer array with the Utah array ID for each channel (1–16).
+
+- `arrayColor`  
+  Float array of shape `(1024, 3)` with RGB values (0–1) used to color-code arrays in plots.
+
+### Visual RF properties (ground truth)
+- `RFX_deg`  
+  RF center **x-coordinate in visual degrees**.
+
+- `RFY_deg`  
+  RF center **y-coordinate in visual degrees**.
+
+- `STDX_deg`  
+  RF size / spread along the **x-axis** in degrees.
+
+- `STDY_deg`  
+  RF size / spread along the **y-axis** in degrees.
+
+- `R2`  
+  Fit quality (R²) for each RF; higher values indicate better fits.
+
+### Cortical positions
+- `cortical_XY`  
+  Float array of shape `(1024, 2)` with each electrode’s **(x, y)** position on the cortical surface.
+
+### Validity mask
+- `goodIDs`  
+  Boolean array (True/False).  
+  `True` indicates channels with non-NaN RF centers and sizes (simple inclusion criterion).
+'''
+
+
 #%% Plotting the RFs (you can use your own function)
 
 min_R2_without_nans = np.nanmin(map_nilson['R2'])
@@ -281,7 +389,7 @@ vertical_pos_MaxResponses_mean = map_nilson['RFY']
 
 # sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 2  # Example way to compute sizes
 sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 2  # Adapted for RF THINGS 1
-#sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 25.8601  # Adapted for RF Matt; pixperdegree
+sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 25.8601  # Adapted for RF Matt; pixperdegree
 
 
 allColors = map_nilson['arrayColor']  # Assuming this is the correct format for colors
@@ -298,6 +406,10 @@ plot_all_RFs(
     offSet,
     text=False  # Set to True if you want text annotations
 )
+
+
+
+
 
 #%% Plotting the PREDICTED RFs (you can use your own function)
 

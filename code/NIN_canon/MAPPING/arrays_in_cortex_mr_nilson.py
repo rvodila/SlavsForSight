@@ -48,7 +48,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-rootpath = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING"
+rootpath = r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight\code\NIN_canon\MAPPING"
 os.chdir(rootpath)
 
 
@@ -151,7 +151,7 @@ blue_mask = cv2.erode(blue_mask, kernel, iterations=2)
 
 ArrCounter = 0
 
-%matplotlib inline
+# %matplotlib inline
 
 # Iterate through each mask
 for color, mask in zip(['Red', 'Green', 'Blue'], [red_mask, green_mask, blue_mask]):
@@ -250,7 +250,7 @@ for new_label, details in array_details.items():
 
 # At this point, `array_details` includes the Utah array positions and labels (1 to 64) for each array
 
-%matplotlib inline
+# %matplotlib inline
 
 plt.figure(figsize=(12, 8))  # Increased figure size for better visibility
 
@@ -326,8 +326,8 @@ for new_label, details in array_details.items():
 
 # At this point, `array_details` includes the Utah array positions and labels (1 to 64) for each array
 
-%matplotlib inline
-%matplotlib qt
+#%matplotlib inline
+#%matplotlib qt
 
 plt.figure(figsize=(12, 8))  # Increased figure size for better visibility
 

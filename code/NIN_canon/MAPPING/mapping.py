@@ -158,10 +158,10 @@ import scipy.io
 import pickle
 import matplotlib.pyplot as plt
 
-rootpath = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING"
+rootpath = r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight\code\NIN_canon\MAPPING"
 os.chdir(rootpath)
 
-%matplotlib inline
+# %matplotlib inline
 
 #%% Function definition
 
@@ -234,7 +234,7 @@ channel_map_exp1_dict['stimBanks_number'] = stimBanks_numbers
 
 #%% Adding X, Y locations of every electrode in the cortex (from arrays_in_cortex_mr_nilson.py)
 
-array_cortex_info_path = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING\results\cortical_array_details.pkl"
+array_cortex_info_path = r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight\code\NIN_canon\MAPPING\results\cortical_array_details.pkl"
 # Loading array_details from the saved file
 with open(array_cortex_info_path, 'rb') as file:
     array_cortex_info = pickle.load(file)
@@ -470,7 +470,7 @@ if RF_TYPE == 'BARS_S_NOISE':
 elif RF_TYPE == 'THINGS':
     # ---- RF_THINGS natural images data ----
     import scipy.io
-    PIX_PER_DEG_THINGS = 25.8601
+    PIX_PER_DEG_THINGS = 25.8601 # mapping pix to unit circel, DVA
 
     # Define the path to your .mat file
     # mat_file_path = r'\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\RFs_combined_bars_noise_and_THINGS\RF_MrNilson_THINGS\THINGS_RFs.mat'
@@ -563,7 +563,7 @@ elif RF_TYPE == 'MATT':
     
     # Define the path to the new .mat file
     # grid_map_path = r'\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\ERFs\Matt\GridMap_Nilson.mat'
-    grid_map_path = r'\\Vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING\Matt\GridMap_Nilson.mat'
+grid_map_path = r'\\Vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING\Matt\GridMap_Nilson.mat'
     
     
     # Load the Grid Map data from the .mat file
@@ -1447,7 +1447,7 @@ print(f"'channel_map_exp1_dict' saved successfully to {mapping_file_path}")
 
 
 # Define the path to the 'mapping.kl' file within the 'results' folder
-rootpath = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING"  # Ensure this is your correct rootpath
+#rootpath = r"\\vs03\VS03-VandC-INTENSE2\mind_writing\data_analysis\MAPPING"  # Ensure this is your correct rootpath
 mapping_file_path = os.path.join(rootpath, 'results', 'mapping_MrNilson.pkl')
 
 # Load the 'channel_map_exp1_dict' dictionary from the 'mapping.kl' file
@@ -1502,7 +1502,7 @@ print(f"RFX: {rfx}, RFY: {rfy}")
 #            'instanceNumbers', 'electrodeNumbers', 'arrayNumbers', 'stimChannels',
 #            'stimNumbers', 'cereM_banks', 'stimBanks', 'arrayColor', 'alphaValue'])
 # %matplotlib qt
-%matplotlib inline
+# %matplotlib inline
 
 PLOT = False
 SAVE_FIGURE = True
