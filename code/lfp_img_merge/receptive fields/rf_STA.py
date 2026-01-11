@@ -1,26 +1,17 @@
-# %% ---------- CONFIG ----------
-METHOD = 'GLM'  # 'GLM' 
-PIX_PER_DEG_THINGS = 25.8601  # pixels per degree, from mapping.py
-monkey = 'monkeyN' # monkeyF
-out_size = (64, 64)  # RF grid resolution: 64x64| "sensors" (stimulus pixels); 128 is already crashing my system
-n_subset = 1000 # random subset of >22248 images in train set
-E_SUBSET = None # None
+# %%
+# ---------- CONFIG ----------
+METHOD = 'STA'  
+out_size = (64, 64)  # RF grid: 64x64 "sensors" (stimulus pixels); 128 is already crashing my system
+n_subset = 1000 # random subset of >22k images in train set
+shuffle_mapping = False # True mapping of MUA - image shown. acts as sanity check.
+monkey = 'monkeyN'
+E_SUBSET = None
 if E_SUBSET is not None:
     assert E_SUBSET % 64 == 0
-shuffle_mapping = False # Shuffle true mapping of MUA - image. acts as sanity check.
-reg = None #l1, l2, elastic
-VERBOSE = False
-# ElasticNet for a balance between sparsity and smoothness
-# l1 ~
-alpha = 0.1
-l1_ratio = 0.7
-# Vis
-vlim = (-1e-3, 1e-3)# 
+vlim = (-0.5, 0.5)
+
 # %%
 # ---------- IMPORTS ----------
-from matplotlib.gridspec import GridSpec
-import math
-from matplotlib.patches import Rectangle
 import os
 import numpy as np
 from PIL import Image
@@ -32,21 +23,20 @@ from pathlib import Path
 # custom imports
 sys.path.append(str(Path(__file__).parent))
 from functions import plot_rf_grid
-# %%
 # ---------- DIR ----------
-wd = r"E:\radboud\Masters Thesis" # r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight"
+wd = r"E:\radboud\Masters Thesis"
 # image-side tree
-image_side_dir = join(wd, 'data','source data', 'image data')
+image_side_dir = join(wd, 'data', 'source data', 'image data')
 things_dir = join(image_side_dir, 'THINGS')
 object_images_dir = os.path.join(things_dir,"images_THINGS", "object_images")
 # ephys side tree
-ephys_side_dir = join(wd, 'data','source data', 'neural data')
+ephys_side_dir = join(wd, 'data', 'source data', 'neural data')
 tvsd_dir = join(ephys_side_dir, 'TVSD')
 log_path = join(tvsd_dir, monkey, '_logs')
 image_MUA_mapping = join(log_path, 'things_imgs.mat') # mapping
 normMUA_path = join(tvsd_dir, monkey, 'THINGS_normMUA.mat')
 # derivatives tree
-derivatives_ephys_dir = join(wd, 'data','derivatives', 'neural data', 'TVSD')
+derivatives_ephys_dir = join(wd, 'derivatives', 'neural data', 'TVSD')
 derivatives_rf_dir = join(derivatives_ephys_dir, monkey, 'ReceptiveFields')
 # ana tree
 ana_dir = join(wd, 'analysis', 'TVSD')
@@ -170,7 +160,7 @@ def load_image_downsample_gray(rel_path, root, size, verbose=False):
 
     img = Image.open(img_path).convert("L")  # grayscale
     orig_w, orig_h = img.size
-    #print(img.size)
+
     if verbose:
         print(f"[load_image] Original size: {orig_w}x{orig_h} -> resizing to {size[0]}x{size[1]}")
 
@@ -183,16 +173,7 @@ def load_image_downsample_gray(rel_path, root, size, verbose=False):
               f"min={arr.min():.3f}, max={arr.max():.3f}")
 
     return arr
-
-def get_image_size(rel_path, root):
-    """
-    Return original (W, H) image size without resizing.
-    """
-    img_path = os.path.join(root, rel_path)
-    img = Image.open(img_path)
-    return img.size
-# %%
-# ---------- RF HELPERS ----------
+# %%# ---------- RF HELPERS ----------
 def build_stimulus_and_response(
     image_paths,
     responses,
@@ -262,16 +243,104 @@ def build_stimulus_and_response(
 
     if verbose:
         print(f"[build_SR] Done. X shape: {X.shape}, R shape: {R.shape}")
-        print(f"[build_SR] X stats: mean={X.mean():.4f}, std={X.std():.4f}, "
+        print(f"[build_SR] X stats: mean={X.mean():.4f} "
               f"min={X.min():.4f}, max={X.max():.4f}")
-        print(f"[build_SR] R stats: mean={R.mean():.4f}, std={R.std():.4f}, "
+        print(f"[build_SR] R stats: mean={R.mean():.4f} "
               f"min={R.min():.4f}, max={R.max():.4f}")
 
     return X, R, H, W
+def corr_rf(
+    X,
+    R,
+    H,
+    W,
+    elec_indices=None,
+    verbose=True,
+):
+    """
+    Compute correlation-based RFs for one or more electrodes.
 
+    Args:
+        X: np.ndarray, shape (N, D)
+           Stimulus matrix: N images, D pixels (flattened).
+        R: np.ndarray, shape (N, E)
+           Response matrix: N images, E electrodes.
+        img_shape: (H, W) tuple, for reshaping RFs back to images.
+        elec_indices: array-like of electrode indices to use.
+                      If None, use all electrodes.
+        shuffle: if True, shuffle rows of R (stimulus-response break) as control.
+        rng: np.random.Generator or int or None.
+             If provided, used for reproducible shuffling.
+        verbose: if True, print debug info.
 
-# %%
-# Exec prepare_things_obj
+    Returns:
+        RFs: np.ndarray, shape (E_sel, H, W)
+        used_indices: np.ndarray, shape (E_sel,)
+    """
+    X = np.asarray(X, dtype=np.float32)
+    R = np.asarray(R, dtype=np.float32)
+
+    N, D = X.shape
+    N2, E = R.shape
+    assert N == N2, "X and R must have same number of rows (trials/images)"
+
+    # Electrode subset
+    if elec_indices is None:
+        elec_indices = np.arange(E)
+        if verbose:
+            print(f"[corr_RF] Using ALL E={E} electrodes.")
+    else:
+        elec_indices = np.asarray(elec_indices)
+        if verbose:
+            print(f"[corr_RF] Using subset of {len(elec_indices)} electrodes.")
+
+    # Center X and R once
+    Xc = X - X.mean(axis=0, keepdims=True)   # (N, D)
+    Rc = R - R.mean(axis=0, keepdims=True)   # (N, E)
+
+    if verbose:
+        print(f"[corr_RF] N={N} images, D={D} pixels, E={E} electrodes")
+        print(f"[corr_RF] Computing pixel–electrode covariances ...")
+
+    # Covariance: (D, E) = (D, N) @ (N, E)
+    cov = (Xc.T @ Rc) / (N - 1)              # (D, E)
+
+    # Std for pixels and electrodes
+    std_x = Xc.std(axis=0, ddof=1)[:, None] + 1e-9   # (D, 1)
+    std_y = Rc.std(axis=0, ddof=1)[None, :] + 1e-9   # (1, E)
+
+    corr = cov / (std_x * std_y)                     # (D, E)
+
+    # Select electrodes of interest
+    corr_sel = corr[:, elec_indices]                 # (D, E_sel)
+    E_sel = corr_sel.shape[1]
+
+    # Reshape to RF maps: (E_sel, H, W)
+    RFs = corr_sel.T.reshape(E_sel, H, W)
+
+    if verbose:
+        print(f"[corr_RF] Done. RFs shape: {RFs.shape}")
+        print(f"[corr_RF] RF stats: mean={RFs.mean():.4f}, std={RFs.std():.4f}, "
+              f"min={RFs.min():.4f}, max={RFs.max():.4f}")
+
+    return RFs, elec_indices
+def rf_center_top_percentile(rf, pct=2.0, use_abs=True, eps=1e-9):
+    rf = np.asarray(rf)
+    w = np.abs(rf) if use_abs else rf
+    thr = np.nanpercentile(w, 100.0 - pct)
+    mask = w >= thr
+    if not np.any(mask):
+        return np.nan, np.nan
+    ys, xs = np.mgrid[0:w.shape[0], 0:w.shape[1]]
+    w_sel = w * mask
+    w_sum = w_sel.sum()
+    if w_sum <= eps:
+        return np.nan, np.nan
+    mx = (w_sel * xs).sum() / w_sum
+    my = (w_sel * ys).sum() / w_sum
+    return float(mx), float(my)
+# %%  EXEC IMG 
+
 train_class, train_local_path, train_things_path = prepare_THINGS_objects(image_MUA_mapping, verbose=False)
 ## class_refs shape: (22248, 1) dtype: object
 ## local_path_refs shape: (22248, 1) dtype: object
@@ -287,17 +356,16 @@ with h5py.File(normMUA_path, "r") as f:
     test_MUA      = np.array(f["test_MUA"])        # (100, 1024)
     test_MUA_reps = np.array(f["test_MUA_reps"])   # (30, 100, 1024)
     train_MUA     = np.array(f["train_MUA"])       # (22248, 1024)
-
-    # %%
-
-    # PREPARE and ESTIMATE
+# %%
+# PREPARE and ESTIMATE
 # specify  images to use for RF estimation
 n_total = len(train_things_path)
 print(f"[MAIN] Total available training images: {n_total}")
 
-# For speed, potentially use a random subset, REF to n_subset
+# For speed, potentially use a random subset
+
 idxs = np.random.choice(n_total, size=min(n_subset, n_total), replace=False)
-print(f"[MAIN] Using {len(idxs)} images for building X.")
+print(f"[MAIN] Using {len(idxs)} images for RF estimation.")
 
 # build X (stimuli) and R (responses)
 X, R, H, W = build_stimulus_and_response(
@@ -305,12 +373,10 @@ X, R, H, W = build_stimulus_and_response(
     responses=train_MUA,
     root=object_images_dir,
     size=out_size,
-    idxs=idxs,   # or some subset
-    verbose=False
+    idxs=None,   # or some subset
+    verbose=False,
 )
-orig_w, orig_h = get_image_size(train_things_path[idxs[0]], object_images_dir)
 print(f"[MAIN] X shape: {X.shape}, R shape: {R.shape}, img_shape: {H, W}")
-print(f"[MAIN] First image original size: {orig_w}x{orig_h}")
 # --- Monkey N: which Utah array is in which area ---
 # WARNING: order is a placeholder – adjust once you know the true array order from TVSD metadata.
 
@@ -336,52 +402,18 @@ save_path = os.path.join(save_dir, data_fname)
 np.savez_compressed(save_path, X=X, R=R, H=H, W=W)
 print(f"[SAVE] Saved stimulus-response data to: {save_path}")
 
+# %%
+# Fit model
+elec_indices = None
+if E_SUBSET is not None:
+    if E_SUBSET > R.shape[1]:
+        raise ValueError(f"E_SUBSET={E_SUBSET} exceeds available electrodes {R.shape[1]}")
+    elec_indices = np.arange(E_SUBSET)
+RFs, used = corr_rf(X, R, H, W, elec_indices=elec_indices, verbose=False)
+print(f"[MAIN] RFs shape: {RFs.shape}  (E_sel, H, W)")
 
 # %%
-## LOADING
-# Construct load path
-loading=False
-if loading:
-    len_idxs = n_subset # how many images to include
-    load_path = join(derivatives_rf_dir, 'linear', f"{monkey}_X_R_imgshape{len_idxs}_{order}.npz")
-
-    # Load .npz file
-    loaded = np.load(load_path)
-    X = loaded["X"]
-    R = loaded["R"]
-    H = int(loaded["H"])
-    W = int(loaded["W"])
-
-    print(f"[LOAD] Loaded X shape: {X.shape}, R shape: {R.shape}, img shape: {(H, W)}")
-
-    # %%
-from sklearn.linear_model import SGDRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
-# ---------- FIT GLM ----------
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
-N, D = X_scaled.shape
-E = R.shape[1]
-assert E % 64 == 0
-if E_SUBSET:
-     E = E_SUBSET
-RFs = np.zeros((E, H * W))
-for i in range(E):
-        if VERBOSE:
-             if i%50 == 0:
-                 print(i)
-        y = R[:, i]
-        #model = Ridge(alpha=0.10)
-
-        # ElasticNet for a balance between sparsity and smoothness
-        # l1 ~
-        model = ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
-        model.fit(X_scaled, y)
-        RFs[i] = model.coef_ # shape [n_shanks, 4096]
-
-# %%
-# Plotting prepare
+# Plotting
 # array 
 if monkey == 'monkeyN':
     # Nilson
@@ -400,60 +432,59 @@ elif monkey == 'monkeyF':
         9:  'V4', 10: 'V4', 11: 'V4', 12: 'V4',
         13: 'IT', 14: 'IT', 15: 'IT', 16: 'IT',
     }
-# RFs: (1024, , W') CARTESIAN
+# RFs: (E_sel, H, W)
+E, H, W = RFs.shape
+if E % 64 != 0:
+    raise ValueError(f"E={E} is not divisible by 64; check E_SUBSET")
 n_arrays = E // 64
-RFs_reshaped = RFs.reshape(E, 64, 64)  # shape (n_elec, 64, 64)
-rf_per_array = RFs_reshaped.reshape(int(E/64), 64, 64, 64).mean(axis=1)  # shape (16, 64, 64, 64)
-                                                                                  #^ nr. of electrodes under investigation
-# RFs: (1024, , W') Estimate center and SIZE form RF maps
-# %% Coordinate grid (pixel indices)
-# ---------------------------------------------------------
-# Compute RF centers & sizes in PIXEL COORDINATES (RAW)
-# ---------------------------------------------------------
-center_pct = 2.0
+# reshape to (n_arrays, 64 electrodes per array, H, W) and average over electrodes
+rf_per_array = RFs.reshape(n_arrays, 64, H, W).mean(axis=1)   # (n_arrays, H, W)
+# flip sign for modeling/plotting if desired
 rf_per_array_model = -rf_per_array
 
-def rf_center_top_percentile(rf, pct=2.0, use_abs=True, eps=1e-9):
-    rf = np.asarray(rf)
-    w = np.abs(rf) if use_abs else rf
-    thr = np.nanpercentile(w, 100.0 - pct)
-    mask = w >= thr
-    if not np.any(mask):
-        return np.nan, np.nan
-    ys, xs = np.mgrid[0:w.shape[0], 0:w.shape[1]]
-    w_sel = w * mask
-    w_sum = w_sel.sum()
-    if w_sum <= eps:
-        return np.nan, np.nan
-    mx = (w_sel * xs).sum() / w_sum
-    my = (w_sel * ys).sum() / w_sum
-    return float(mx), float(my)
 
-rfx_arr = np.full(rf_per_array_model.shape[0], np.nan, dtype=float)
-rfy_arr = np.full(rf_per_array_model.shape[0], np.nan, dtype=float)
-for i in range(rf_per_array_model.shape[0]):
-    mx, my = rf_center_top_percentile(rf_per_array_model[i], pct=center_pct, use_abs=True)
+save_dir =  join(ana_monkey_dir, 'Exploration', 'ReceptiveFields', 'STA')
+os.makedirs(save_dir, exist_ok=True)
+basename = f'{monkey}_STA_RFs_{shuffle_suffix}'
+rf_save_path = os.path.join(save_dir, f"{basename}_rf_per_array.npy")
+np.save(rf_save_path, rf_per_array)
+print(f"[MAIN] Saved rf_per_array to: {rf_save_path}")
+
+
+# params per array estimated directly from array-averaged RFs
+rfx_arr = np.full(n_arrays, np.nan, dtype=float)
+rfy_arr = np.full(n_arrays, np.nan, dtype=float)
+for i in range(n_arrays):
+    mx, my = rf_center_top_percentile(rf_per_array_model[i], pct=2.0, use_abs=True)
     rfx_arr[i] = mx
     rfy_arr[i] = my
 
+params_per_array = {"RFX": rfx_arr, "RFY": rfy_arr}
+
+# diagnostics for ellipse params (pixel units)
 def qstats(x):
     return np.nanmin(x), np.nanmedian(x), np.nanmax(x)
 
 valid = np.isfinite(rfx_arr) & np.isfinite(rfy_arr)
+
 rfx_v = rfx_arr[valid]
 rfy_v = rfy_arr[valid]
-print("[DIAG] GLM RF center stats (rfx) min/med/max:", qstats(rfx_v))
-print("[DIAG] GLM RF center stats (rfy) min/med/max:", qstats(rfy_v))
-print("[DIAG] GLM image size (H, W):", (H, W))
+
 
 basename_params = f"{monkey}_{METHOD}_RFs_params_{shuffle_suffix}"
-params_save_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_array.csv")
-coords = np.column_stack([np.arange(1, rfx_arr.shape[0] + 1), rfx_arr, rfy_arr])
-np.savetxt(params_save_path, coords, delimiter=",", header="array,rfx,rfy", comments="")
-print(f"[MAIN] Saved GLM RF centers to: {params_save_path}")
+params_save_path = os.path.join(save_dir, f"{basename_params}_rf_params_per_array.npz")
+np.savez(params_save_path, **params_per_array)
+print(f"[MAIN] Saved params_per_array to: {params_save_path}")
+# save focus coordinates per array (array_index, rfx, rfy)
 
-# %% Plotting
-params_per_array = None #{"RFX": rfx_arr, "RFY": rfy_arr}
+coords = np.column_stack([np.arange(1, n_arrays + 1), rfx_arr, rfy_arr])
+coords_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_array.csv")
+np.savetxt(coords_path, coords, delimiter=",", header="array,rfx,rfy", comments="")
+print(f"[MAIN] Saved RF centers to: {coords_path}")
+
+# plot 16 averaged RFs (Utah arrays)
+array2area = {k: array2area.get(k, "unknown") for k in range(1, n_arrays + 1)}
+params_per_array = {"RFX": rfx_arr, "RFY": rfy_arr}
 basename_plot = f"{monkey}_GLM_RFs_{shuffle_suffix}"
 plot_rf_grid(
     rf_per_array_model,
@@ -467,6 +498,4 @@ plot_rf_grid(
     dpi=300,
     cmap="bwr",
 )
-    
-# %%
-params_save_path
+print(f"[MAIN] Plotted RF grid and saved to: {save_dir}/{basename}_RFs.png")
