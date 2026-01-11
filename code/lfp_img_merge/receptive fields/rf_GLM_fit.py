@@ -1,9 +1,10 @@
 # %% ---------- CONFIG ----------
+METHOD = 'GLM'  # 'GLM' 
 PIX_PER_DEG_THINGS = 25.8601  # pixels per degree, from mapping.py
 monkey = 'monkeyN' # monkeyF
-out_size = (64, 64)  # RF grid resolution: 64x64 "sensors" (stimulus pixels); 128 is already crashing my system
+out_size = (64, 64)  # RF grid resolution: 64x64| "sensors" (stimulus pixels); 128 is already crashing my system
 n_subset = 10000 # random subset of >22248 images in train set
-E_SUBSET = 512 # None
+E_SUBSET = None # None
 if E_SUBSET is not None:
     assert E_SUBSET % 64 == 0
 shuffle_mapping = False # Shuffle true mapping of MUA - image. acts as sanity check.
@@ -36,7 +37,7 @@ log_path = join(tvsd_dir, monkey, '_logs')
 image_MUA_mapping = join(log_path, 'things_imgs.mat') # mapping
 normMUA_path = join(tvsd_dir, monkey, 'THINGS_normMUA.mat')
 # derivatives tree
-derivatives_ephys_dir = join(wd, 'data''derivatives', 'neural data', 'TVSD')
+derivatives_ephys_dir = join(wd, 'data','derivatives', 'neural data', 'TVSD')
 derivatives_rf_dir = join(derivatives_ephys_dir, monkey, 'ReceptiveFields')
 # ana tree
 ana_dir = join(wd, 'analysis', 'TVSD')
@@ -269,6 +270,8 @@ def plot_rf_grid(
         rf_per_array, array2area,
         monkey,basename = None,
         shuffle_suffix="true_order", vlim=(-0.5, 0.5),
+        params_per_array=None,
+        show_center_text=True,
         save_dir=None, 
         dpi=300
     ):
@@ -312,7 +315,7 @@ def plot_rf_grid(
         from matplotlib.patches import Rectangle
 
         rf = rf_per_array[idx]
-        im = ax.imshow(rf, cmap="bwr_r", vmin=vmin, vmax=vmax)
+        im = ax.imshow(rf, cmap="bwr", vmin=vmin, vmax=vmax)
         ax.axis("off")
 
         # Add a black rectangle that exactly bounds the image
@@ -323,6 +326,18 @@ def plot_rf_grid(
         )
         ax.add_patch(rect)
 
+        if params_per_array is not None:
+            cx = params_per_array["RFX"][idx]
+            cy = params_per_array["RFY"][idx]
+            if np.isfinite([cx, cy]).all():
+                ax.plot(cx, cy, marker="o", markersize=2, color="black")
+                if show_center_text:
+                    ax.text(
+                        0.02, 0.02, f"({cx:.1f},{cy:.1f})",
+                        transform=ax.transAxes, fontsize=8,
+                        color="black", ha="left", va="bottom",
+                        bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6, ec="none"),
+                    )
 
         array_num = idx + 1  # 1-based
         area = array2area.get(array_num, "unknown")
@@ -347,207 +362,6 @@ def plot_rf_grid(
 
     plt.show()
 
-def compute_array_centers_dva(
-        rf_per_array,
-        H, W,
-        OFFSET_X_PIX_DS, OFFSET_Y_PIX_DS,
-        PIX_PER_DEG_THINGS
-    ):
-    """
-    Compute array-level RF centers in DVA space from averaged RF maps.
-    """
-    n_arrays, _, _ = rf_per_array.shape
-
-    # fovea location in downsampled image pixel coordinates
-    cx_pix = (W - 1) / 2.0
-    cy_pix = (H - 1) / 2.0
-    fovea_x_pix = cx_pix - OFFSET_X_PIX_DS
-    fovea_y_pix = cy_pix - OFFSET_Y_PIX_DS
-
-    # pixel grid -> DVA grid
-    y_coords, x_coords = np.meshgrid(
-        np.arange(H), np.arange(W), indexing="ij"
-    )
-    x_deg = (x_coords - fovea_x_pix) / PIX_PER_DEG_THINGS
-    y_deg = -(y_coords - fovea_y_pix) / PIX_PER_DEG_THINGS
-
-    center_x_deg = np.zeros(n_arrays, dtype=np.float32)
-    center_y_deg = np.zeros(n_arrays, dtype=np.float32)
-
-    for a in range(n_arrays):
-        rf = rf_per_array[a]
-        w = np.abs(rf)
-        total = w.sum()
-        if total == 0:
-            center_x_deg[a] = np.nan
-            center_y_deg[a] = np.nan
-            continue
-        center_x_deg[a] = (w * x_deg).sum() / total
-        center_y_deg[a] = (w * y_deg).sum() / total
-
-    return center_x_deg, center_y_deg
-
-def plot_rf_centers_dva(
-        center_x_deg, center_y_deg,
-        array2area=None,
-        title="Utah-array RF centers (GLM)",
-        xlim=(-3, 8),
-        ylim=(-8, 3)
-    ):
-    """
-    Plot array-level RF centers in DVA space with per-array colors.
-    """
-    n_arrays = len(center_x_deg)
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=200)
-
-    cmap = plt.get_cmap("tab20")
-    colors = [cmap(i) for i in range(n_arrays)]
-
-    for a in range(n_arrays):
-        x = center_x_deg[a]
-        y = center_y_deg[a]
-
-        if np.isnan(x) or np.isnan(y):
-            continue
-
-        if array2area is not None:
-            area = array2area.get(a + 1, "unknown")
-            if area == "V1":
-                marker = "o"
-            elif area == "V4":
-                marker = "v"
-            elif area == "IT":
-                marker = "x"
-            else:
-                marker = "s"
-        else:
-            marker = "o"
-
-        ax.scatter(
-            x, y,
-            color=colors[a],
-            marker=marker,
-            edgecolors="black",
-            linewidth=0.8,
-            s=80
-        )
-        # identifier per array
-        ax.text(x, y, str(a + 1), fontsize=8, ha="center", va="center", color="white")
-
-    # concentric circles in degrees
-    center = (0, 0)
-    radius = 8
-    num_circles = 4
-    for k in range(num_circles):
-        circle = patches.Circle(
-            center, radius * (k + 1) / num_circles,
-            edgecolor="gray", linewidth=0.5, fill=False, linestyle="dashed"
-        )
-        ax.add_patch(circle)
-
-    ax.axvline(0, color="gray", linestyle="dashed", linewidth=0.5)
-    ax.axhline(0, color="gray", linestyle="dashed", linewidth=0.5)
-
-    ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
-    ax.set_aspect("equal")
-    ax.set_xlabel("Horizontal position (deg)")
-    ax.set_ylabel("Vertical position (deg)")
-    ax.set_title(title)
-
-    plt.tight_layout()
-    plt.show()
-
-def plot_rf_grid_dva(
-        rf_per_array, array2area,
-        monkey,
-        H, W,
-        OFFSET_X_PIX_DS, OFFSET_Y_PIX_DS,
-        PIX_PER_DEG_THINGS,
-        basename=None,
-        shuffle_suffix="true_order", vlim=(-0.5, 0.5),
-        save_dir=None,
-        dpi=300
-    ):
-    """
-    Plot array-averaged RFs in DVA space, re-centered on fovea using
-    downsampled offsets.
-    """
-    n_arrays, _, _ = rf_per_array.shape
-    n_cols = min(4, n_arrays)  # 4 max per row
-    n_rows = math.ceil(n_arrays / n_cols)
-
-    fig = plt.figure(figsize=(3.6 * n_cols, 3.6 * n_rows))
-    suptitle = f'{monkey} – GLM-based RFs per array (DVA, {shuffle_suffix})'
-    fig.suptitle(suptitle, fontsize=18)
-
-    gs = GridSpec(
-        n_rows,
-        n_cols + 1,  # extra column for colorbar
-        width_ratios=[1] * n_cols + [0.05],
-        wspace=0.4,
-        hspace=0.5
-    )
-
-    # color limits
-    if vlim is None:
-        vmax = np.max(np.abs(rf_per_array))
-        vmin = -vmax
-    else:
-        vmin, vmax = vlim
-
-    # fovea location in downsampled image pixel coordinates
-    cx_pix = (W - 1) / 2.0
-    cy_pix = (H - 1) / 2.0
-    fovea_x_pix = cx_pix - OFFSET_X_PIX_DS
-    fovea_y_pix = cy_pix - OFFSET_Y_PIX_DS
-
-    # DVA extents for imshow
-    x_deg = (np.arange(W) - fovea_x_pix) / PIX_PER_DEG_THINGS
-    y_deg = -(np.arange(H) - fovea_y_pix) / PIX_PER_DEG_THINGS
-    extent = [x_deg.min(), x_deg.max(), y_deg.min(), y_deg.max()]
-
-    for idx in range(n_arrays):
-        r = idx // n_cols
-        c = idx % n_cols
-        ax = fig.add_subplot(gs[r, c])
-
-        rf = rf_per_array[idx]
-        im = ax.imshow(
-            rf,
-            cmap="bwr_r",
-            vmin=vmin,
-            vmax=vmax,
-            extent=extent,
-            origin="lower"
-        )
-        ax.axhline(0, color="black", linewidth=0.6, alpha=0.7)
-        ax.axvline(0, color="black", linewidth=0.6, alpha=0.7)
-
-        array_num = idx + 1  # 1-based
-        area = array2area.get(array_num, "unknown")
-        ax.set_title(f"Array {array_num} – {area}", fontsize=11, pad=10)
-        ax.set_xlabel("DVA x (deg)")
-        ax.set_ylabel("DVA y (deg)")
-
-    # colorbar
-    cax = fig.add_subplot(gs[:, -1])
-    cbar = fig.colorbar(im, cax=cax)
-    cbar.set_label("corr(pixel, MUA)")
-
-    plt.tight_layout(rect=[0, 0, 0.96, 0.95])
-
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        png_path = os.path.join(save_dir, f"{basename}_DVA.png")
-        pdf_path = os.path.join(save_dir, f"{basename}_DVA.pdf")
-
-        fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
-        fig.savefig(pdf_path, dpi=dpi, bbox_inches="tight")
-        print(f"[plot_rf_grid_dva] Saved PNG to: {png_path}")
-        print(f"[plot_rf_grid_dva] Saved PDF to: {pdf_path}")
-
-    plt.show()
 # %%
 # Exec prepare_things_obj
 train_class, train_local_path, train_things_path = prepare_THINGS_objects(image_MUA_mapping, verbose=False)
@@ -606,7 +420,7 @@ else:
         shuffle_sufix = 'true_order'
 saving=True
 if saving:
-        save_dir = join(derivatives_rf_dir, 'linear')
+        save_dir = join(derivatives_rf_dir, 'linear', "f{METHOD}")
         os.makedirs(save_dir, exist_ok=True)
 
         data_fname = f"{monkey}_X_R_imgshape{len(idxs)}_{order}.npz"
@@ -625,7 +439,7 @@ if loading:
         order = 'shuffled'
     else:
         order = 'ordered'
-    len_idxs = 5000 # how many images to include
+    len_idxs = n_subset # how many images to include
     load_path = join(derivatives_rf_dir, 'linear', f"{monkey}_X_R_imgshape{len_idxs}_{order}.npz")
 
     # Load .npz file
@@ -693,201 +507,62 @@ rf_per_array = RFs_reshaped.reshape(int(E/64), 64, 64, 64).mean(axis=1)  # shape
 # ---------------------------------------------------------
 # Compute RF centers & sizes in PIXEL COORDINATES (RAW)
 # ---------------------------------------------------------
+center_pct = 2.0
+rf_per_array_model = -rf_per_array
 
-y_coords, x_coords = np.meshgrid(
-    np.arange(H), np.arange(W), indexing="ij"
-)
+def rf_center_top_percentile(rf, pct=2.0, use_abs=True, eps=1e-9):
+    rf = np.asarray(rf)
+    w = np.abs(rf) if use_abs else rf
+    thr = np.nanpercentile(w, 100.0 - pct)
+    mask = w >= thr
+    if not np.any(mask):
+        return np.nan, np.nan
+    ys, xs = np.mgrid[0:w.shape[0], 0:w.shape[1]]
+    w_sel = w * mask
+    w_sum = w_sel.sum()
+    if w_sum <= eps:
+        return np.nan, np.nan
+    mx = (w_sel * xs).sum() / w_sum
+    my = (w_sel * ys).sum() / w_sum
+    return float(mx), float(my)
 
-# Arrays like in THINGS mat file (PIXELS)
-all_centrex = np.zeros(E, dtype=np.float32)  # RF center x (pixels)
-all_centrey = np.zeros(E, dtype=np.float32)  # RF center y (pixels)
-all_szx     = np.zeros(E, dtype=np.float32)  # RF std x (pixels)
-all_szy     = np.zeros(E, dtype=np.float32)  # RF std y (pixels)
+rfx_arr = np.full(rf_per_array_model.shape[0], np.nan, dtype=float)
+rfy_arr = np.full(rf_per_array_model.shape[0], np.nan, dtype=float)
+for i in range(rf_per_array_model.shape[0]):
+    mx, my = rf_center_top_percentile(rf_per_array_model[i], pct=center_pct, use_abs=True)
+    rfx_arr[i] = mx
+    rfy_arr[i] = my
 
-for i in range(E):
-    rf = RFs_reshaped[i]      # (H, W)
-    w  = np.abs(rf)           # magnitude as importance
-    total = w.sum()
+def qstats(x):
+    return np.nanmin(x), np.nanmedian(x), np.nanmax(x)
 
-    if total == 0:
-        all_centrex[i] = np.nan
-        all_centrey[i] = np.nan
-        all_szx[i]     = np.nan
-        all_szy[i]     = np.nan
-        continue
+valid = np.isfinite(rfx_arr) & np.isfinite(rfy_arr)
+rfx_v = rfx_arr[valid]
+rfy_v = rfy_arr[valid]
+print("[DIAG] GLM RF center stats (rfx) min/med/max:", qstats(rfx_v))
+print("[DIAG] GLM RF center stats (rfy) min/med/max:", qstats(rfy_v))
+print("[DIAG] GLM image size (H, W):", (H, W))
 
-    # --- center of mass (PIXELS, top-left origin) ---
-    x_mean = (w * x_coords).sum() / total
-    y_mean = (w * y_coords).sum() / total
+basename_params = f"{monkey}_{METHOD}_RFs_params_{shuffle_sufix}"
+params_save_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_array.csv")
+coords = np.column_stack([np.arange(1, rfx_arr.shape[0] + 1), rfx_arr, rfy_arr])
+np.savetxt(params_save_path, coords, delimiter=",", header="array,rfx,rfy", comments="")
+print(f"[MAIN] Saved GLM RF centers to: {params_save_path}")
 
-    # --- spread (PIXELS) ---
-    x_var = (w * (x_coords - x_mean) ** 2).sum() / total
-    y_var = (w * (y_coords - y_mean) ** 2).sum() / total
-
-    all_centrex[i] = x_mean
-    all_centrey[i] = y_mean
-    all_szx[i]     = np.sqrt(x_var)
-    all_szy[i]     = np.sqrt(y_var)
-# ---------------------------------------------------------
-# Fovea-centered coordinates (account for stimulus offset)
-# ---------------------------------------------------------
-
-# THINGS presentation offset relative to gaze-centered screen center (in *image pixels*)
-# IMPORTANT: if you resized stimuli, scale this offset to your current H,W.
-# If the original offset was defined in the *same pixel space* as your current H,W, keep as 100.
-OFFSET_X_PIX = 100.0
-OFFSET_Y_PIX = 100.0
-
-# Downsampled offset in current H,W pixel space (log only, do not recenter yet)
-scale_x = W / orig_w
-scale_y = H / orig_h
-OFFSET_X_PIX_DS = OFFSET_X_PIX * scale_x
-OFFSET_Y_PIX_DS = OFFSET_Y_PIX * scale_y
-print(f"[OFFSET] Downsampled fixation offset (px): ({OFFSET_X_PIX_DS:.3f}, {OFFSET_Y_PIX_DS:.3f})")
-
-# image center in pixel coordinates (top-left origin)
-cx_pix = (W - 1) / 2.0
-cy_pix = (H - 1) / 2.0
-
-# fovea location expressed in image pixel coordinates
-# (image was shifted right/down by +100 px relative to gaze, so fovea is left/up of image center)
-fovea_x_pix = cx_pix - OFFSET_X_PIX
-fovea_y_pix = cy_pix - OFFSET_Y_PIX
-
-# Gaze-centered RF centers in degrees:
-# +x right, +y up
-RFX_fov_deg = (all_centrex - fovea_x_pix) / PIX_PER_DEG_THINGS
-RFY_fov_deg = -(all_centrey - fovea_y_pix) / PIX_PER_DEG_THINGS
-
-# sizes are unaffected by centering/flipping (only unit conversion)
-STDX_fov_deg = all_szx / PIX_PER_DEG_THINGS
-STDY_fov_deg = all_szy / PIX_PER_DEG_THINGS
-
-
-# ---------------------------------------------------------
-# Convert PIXELS → DEGREES (NO center, NO flip)
-# ---------------------------------------------------------
-
-RFX_deg  = all_centrex / PIX_PER_DEG_THINGS
-RFY_deg  = all_centrey / PIX_PER_DEG_THINGS
-STDX_deg = all_szx     / PIX_PER_DEG_THINGS
-STDY_deg = all_szy     / PIX_PER_DEG_THINGS
-
-
-# ---------------------------------------------------------
-# Sanity checks
-# ---------------------------------------------------------
-assert RFs_reshaped.shape == (E, H, W), \
-    f"Expected RFs_reshaped {(E,H,W)}, got {RFs_reshaped.shape}"
-assert E % 64 == 0, \
-    f"E={E} not divisible by 64 (64 electrodes per Utah array)"
-
-
-# ---------------------------------------------------------
-# Save (RAW coordinates)
-# ---------------------------------------------------------
-
-rf_save_dir = join(derivatives_rf_dir, "linear")
-os.makedirs(rf_save_dir, exist_ok=True)
-
-rf_fname = f"{monkey}_GLM_RFs_{len(idxs)}imgs_{order}_alpha{alpha}_l1r{l1_ratio}.npz"
-rf_save_path = os.path.join(rf_save_dir, rf_fname)
-
-np.savez_compressed(
-    rf_save_path,
-
-    # electrode-level RFs
-    RFs=RFs.astype(np.float32),
-    RFs_reshaped=RFs_reshaped.astype(np.float32),
-
-    # array-level RFs
-    rf_per_array=rf_per_array.astype(np.float32),
-    n_arrays=np.int32(n_arrays),
-
-    # RAW pixel COM + size (top-left origin)
-    all_centrex=all_centrex,
-    all_centrey=all_centrey,
-    all_szx=all_szx,
-    all_szy=all_szy,
-
-    # RAW degree version (top-left origin, y-down)
-    RFX_deg=RFX_deg,
-    RFY_deg=RFY_deg,
-    STDX_deg=STDX_deg,
-    STDY_deg=STDY_deg,
-
-    # --- NEW: fovea-centered degree version (+x right, +y up) ---
-    RFX_fov_deg=RFX_fov_deg.astype(np.float32),
-    RFY_fov_deg=RFY_fov_deg.astype(np.float32),
-    STDX_fov_deg=STDX_fov_deg.astype(np.float32),
-    STDY_fov_deg=STDY_fov_deg.astype(np.float32),
-
-    # --- NEW: fovea definition in pixel coords ---
-    OFFSET_X_PIX=np.float32(OFFSET_X_PIX),
-    OFFSET_Y_PIX=np.float32(OFFSET_Y_PIX),
-    cx_pix=np.float32(cx_pix),
-    cy_pix=np.float32(cy_pix),
-    fovea_x_pix=np.float32(fovea_x_pix),
-    fovea_y_pix=np.float32(fovea_y_pix),
-
-    # metadata
-    PIX_PER_DEG_THINGS=np.float32(PIX_PER_DEG_THINGS),
-    H=np.int32(H),
-    W=np.int32(W),
-    E=np.int32(E),
-    idxs=idxs.astype(np.int32),
-    monkey=str(monkey),
-    order=str(order),
-    alpha=np.float32(alpha),
-    l1_ratio=np.float32(l1_ratio),
-)
-
-print(f"[RF SAVE] Saved RFs with BOTH coordinate frames:")
-print(f"  RAW (top-left origin, y-down): RFX_deg, RFY_deg")
-print(f"  FOVEA-centered (+x right, +y up): RFX_fov_deg, RFY_fov_deg")
-print(f"  fovea_pix=({fovea_x_pix:.2f}, {fovea_y_pix:.2f}), offset_pix=({OFFSET_X_PIX}, {OFFSET_Y_PIX})")
-print(f"  path: {rf_save_path}")
-
-# %%
-
-
-# %%
-# plot 16 averaged RFs (Utah arrays)
-basename, shuffle_suffix = 'test', 'test'
-
+# %% Plotting
+params_per_array = None #{"RFX": rfx_arr, "RFY": rfy_arr}
+basename_plot = f"{monkey}_GLM_RFs_{shuffle_sufix}"
 plot_rf_grid(
-    rf_per_array, array2area, vlim=vlim,
-    monkey="monkeyN", shuffle_suffix=shuffle_suffix,
-    save_dir=save_dir, basename=basename
-)
-
-# plot 16 averaged RFs (Utah arrays) in DVA space
-plot_rf_grid_dva(
-    rf_per_array, array2area,
-    monkey="monkeyN",
-    H=H, W=W,
-    OFFSET_X_PIX_DS=OFFSET_X_PIX_DS,
-    OFFSET_Y_PIX_DS=OFFSET_Y_PIX_DS,
-    PIX_PER_DEG_THINGS=PIX_PER_DEG_THINGS,
-    shuffle_suffix=shuffle_suffix,
+    rf_per_array_model,
+    array2area,
+    monkey,
+    basename=basename_plot,
+    shuffle_suffix=shuffle_sufix,
     vlim=vlim,
+    params_per_array=params_per_array,
+    show_center_text=True,
     save_dir=save_dir,
-    basename=basename
 )
-
-# plot array RF centers in DVA space
-center_x_deg, center_y_deg = compute_array_centers_dva(
-    rf_per_array,
-    H=H, W=W,
-    OFFSET_X_PIX_DS=OFFSET_X_PIX_DS,
-    OFFSET_Y_PIX_DS=OFFSET_Y_PIX_DS,
-    PIX_PER_DEG_THINGS=PIX_PER_DEG_THINGS
-)
-plot_rf_centers_dva(
-    center_x_deg, center_y_deg,
-    array2area=array2area,
-    title="Utah-array RF centers (GLM, DVA)"
-)
-
-
+    
 # %%
+params_save_path

@@ -299,8 +299,10 @@ ground_truth = {
 }
 
 # choose a save path (inside the same MAPPING/results folder)
-gt_save_path = os.path.join(r"E:\radboud\Masters Thesis\analysis\TVSD\monkeyN\Exploration\ReceptiveFields\ground truth",  "nilson_RF_ground_truth.npz")
-
+gt_save_dir = r'E:\radboud\Masters Thesis\analysis\TVSD\monkeyN\Exploration\ReceptiveFields\ground truth'
+if not os.path.isdir(gt_save_dir):
+    os.makedirs(gt_save_dir)
+gt_save_path = os.path.join(gt_save_dir,  "nilson_RF_ground_truth.npz")
 np.savez_compressed(gt_save_path, **ground_truth)
 print(f"[GROUND TRUTH] Saved RF ground-truth data to: {gt_save_path}")
 
@@ -609,3 +611,5 @@ AREA = ['V1'] * (64 * 8) + ['V4'] * (64 * 4) + ['IT'] * (64 * 4)
 
 
 
+
+# %%
