@@ -3,8 +3,8 @@ METHOD = 'GLM'  # 'GLM'
 PIX_PER_DEG_THINGS = 25.8601  # pixels per degree, from mapping.py
 monkey = 'monkeyN' # monkeyF
 out_size = (64, 64)  # RF grid resolution: 64x64| "sensors" (stimulus pixels); 128 is already crashing my system
-n_subset = 10000 # random subset of >22248 images in train set
-E_SUBSET = None # None
+n_subset = 1000 # random subset of >22248 images in train set
+E_SUBSET = 256 # None
 if E_SUBSET is not None:
     assert E_SUBSET % 64 == 0
 shuffle_mapping = False # Shuffle true mapping of MUA - image. acts as sanity check.
@@ -12,8 +12,8 @@ reg = None #l1, l2, elastic
 VERBOSE = False
 # ElasticNet for a balance between sparsity and smoothness
 # l1 ~
-alpha = 0.2
-l1_ratio = 0.8
+alpha = 0.1
+l1_ratio = 0.7
 # Vis
 vlim = (-1e-3, 1e-3)# 
 # %%
@@ -24,6 +24,12 @@ from PIL import Image
 import h5py
 import matplotlib.pyplot as plt
 from os.path import join
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent))
+from functions import plot_rf_grid
+# %%
 # ---------- DIR ----------
 wd = r"E:\radboud\Masters Thesis" # r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight"
 # image-side tree
@@ -266,6 +272,7 @@ import numpy as np
 import os
 import math
 from matplotlib.patches import Rectangle
+from functions import plot_rf_grid as shared_plot_rf_grid
 def plot_rf_grid(
         rf_per_array, array2area,
         monkey,basename = None,
@@ -552,16 +559,17 @@ print(f"[MAIN] Saved GLM RF centers to: {params_save_path}")
 # %% Plotting
 params_per_array = None #{"RFX": rfx_arr, "RFY": rfy_arr}
 basename_plot = f"{monkey}_GLM_RFs_{shuffle_sufix}"
-plot_rf_grid(
+shared_plot_rf_grid(
     rf_per_array_model,
     array2area,
-    monkey,
-    basename=basename_plot,
-    shuffle_suffix=shuffle_sufix,
+    title=f"{monkey} - GLM-based RFs per array ({shuffle_sufix})",
     vlim=vlim,
     params_per_array=params_per_array,
     show_center_text=True,
     save_dir=save_dir,
+    basename=basename_plot,
+    dpi=300,
+    cmap="bwr",
 )
     
 # %%
