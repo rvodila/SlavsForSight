@@ -2,7 +2,7 @@
 # ---------- CONFIG ----------
 METHOD = 'STA'  
 out_size = (64, 64)  # RF grid: 64x64 "sensors" (stimulus pixels); 128 is already crashing my system
-n_subset = 1000 # random subset of >22k images in train set
+n_subset = 10000 # random subset of >22k images in train set
 shuffle_mapping = False # True mapping of MUA - image shown. acts as sanity check.
 monkey = 'monkeyN'
 E_SUBSET = None
@@ -36,7 +36,7 @@ log_path = join(tvsd_dir, monkey, '_logs')
 image_MUA_mapping = join(log_path, 'things_imgs.mat') # mapping
 normMUA_path = join(tvsd_dir, monkey, 'THINGS_normMUA.mat')
 # derivatives tree
-derivatives_ephys_dir = join(wd, 'derivatives', 'neural data', 'TVSD')
+derivatives_ephys_dir = join(wd, 'data' 'derivatives', 'neural data', 'TVSD')
 derivatives_rf_dir = join(derivatives_ephys_dir, monkey, 'ReceptiveFields')
 # ana tree
 ana_dir = join(wd, 'analysis', 'TVSD')
@@ -393,7 +393,7 @@ else:
         order = 'ordered'
         shuffle_suffix = 'true_order'
 
-save_dir = join(derivatives_rf_dir, 'linear', "f{METHOD}")
+save_dir = join(derivatives_rf_dir, 'linear', f"{METHOD}")
 os.makedirs(save_dir, exist_ok=True)
 
 data_fname = f"{monkey}_X_R_imgshape{len(idxs)}_{order}.npz"
@@ -437,13 +437,17 @@ E, H, W = RFs.shape
 if E % 64 != 0:
     raise ValueError(f"E={E} is not divisible by 64; check E_SUBSET")
 n_arrays = E // 64
+# per-channel RFs (sign-flipped for center extraction, consistent with array path)
+rf_per_channel_model = -RFs
+# reshape to (n_arrays, 64 electrodes per array, H, W) and average over electrodes
+# note: assumes electrodes are ordered by array
 # reshape to (n_arrays, 64 electrodes per array, H, W) and average over electrodes
 rf_per_array = RFs.reshape(n_arrays, 64, H, W).mean(axis=1)   # (n_arrays, H, W)
 # flip sign for modeling/plotting if desired
 rf_per_array_model = -rf_per_array
 
 
-save_dir =  join(ana_monkey_dir, 'Exploration', 'ReceptiveFields', 'STA')
+save_dir =  join(ana_monkey_dir, 'Exploration', 'ReceptiveFields', f'{METHOD}')
 os.makedirs(save_dir, exist_ok=True)
 basename = f'{monkey}_STA_RFs_{shuffle_suffix}'
 rf_save_path = os.path.join(save_dir, f"{basename}_rf_per_array.npy")
@@ -460,6 +464,14 @@ for i in range(n_arrays):
     rfy_arr[i] = my
 
 params_per_array = {"RFX": rfx_arr, "RFY": rfy_arr}
+
+# params per channel (same data structure: array,rfx,rfy)
+rfx_chan = np.full(E, np.nan, dtype=float)
+rfy_chan = np.full(E, np.nan, dtype=float)
+for i in range(E):
+    mx, my = rf_center_top_percentile(rf_per_channel_model[i], pct=2.0, use_abs=True)
+    rfx_chan[i] = mx
+    rfy_chan[i] = my
 
 # diagnostics for ellipse params (pixel units)
 def qstats(x):
@@ -481,6 +493,13 @@ coords = np.column_stack([np.arange(1, n_arrays + 1), rfx_arr, rfy_arr])
 coords_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_array.csv")
 np.savetxt(coords_path, coords, delimiter=",", header="array,rfx,rfy", comments="")
 print(f"[MAIN] Saved RF centers to: {coords_path}")
+
+# per-channel centers (array,rfx,rfy)
+array_ids = np.repeat(np.arange(1, n_arrays + 1), 64)
+coords_chan = np.column_stack([array_ids, rfx_chan, rfy_chan])
+coords_chan_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_channel.csv")
+np.savetxt(coords_chan_path, coords_chan, delimiter=",", header="array,rfx,rfy", comments="")
+print(f"[MAIN] Saved RF centers to: {coords_chan_path}")
 
 # plot 16 averaged RFs (Utah arrays)
 array2area = {k: array2area.get(k, "unknown") for k in range(1, n_arrays + 1)}

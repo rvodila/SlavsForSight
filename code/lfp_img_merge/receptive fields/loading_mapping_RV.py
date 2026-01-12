@@ -431,8 +431,8 @@ goodIDs = np.ones((1024,))
 # for THINGS_RF1 which do not has R2 for some reason
 # goodIDs = (~np.isnan(map_nilson['RFX']))
 
-horizontal_pos_MaxResponses_mean = map_nilson['RFX_predicted']
-vertical_pos_MaxResponses_mean = map_nilson['RFY_predicted']
+#horizontal_pos_MaxResponses_mean = map_nilson['RFX_predicted']
+#vertical_pos_MaxResponses_mean = map_nilson['RFY_predicted']
 
 # sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 2  # Example way to compute sizes
 sizes = (map_nilson['STDX'] + map_nilson['STDY']) / 2  # Adapted for RF THINGS 1

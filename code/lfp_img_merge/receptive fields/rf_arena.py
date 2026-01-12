@@ -2,11 +2,20 @@
 
 """
 * Why upside-down in RF plots?
-
+* Add SIGMA ellipse plotting to RF arena
+* Investigate beter GLM RF fitting (regularization, etc)
 Bare coordinate-system plot for RF arena (no RF points/ellipses).
 """
 # %% Config
 PIX_PER_DEG = 25.8601
+PLOT_LEVEL = "channel"  # "array" or "channel" for the arena plot
+ARRAY_AGGREGATE = True  # True -> array-aggregate (16), False -> channel-resolved (~1024)
+COMPARE_LEVELS = ("channel",)  # choose from: "array", "channel" for correlations
+COMPARE_MODES = ("GLM")#, "STA")  # "STA", "GLM", "Nilson"
+COMPARE = False  # whether to do pairwise correlation plots
+
+GLM_MODEL = 'ridge'  # 'ridge', 'lasso', 'elastinet'
+
 monkey = "monkeyN"
 shuffle_mapping = False
 if shuffle_mapping:
@@ -39,8 +48,24 @@ import matplotlib.patches as patches
 import numpy as np
 from os.path import join
 import os
+import pickle
+from itertools import combinations
 
-def load_rf_centers_csv(csv_path):
+def _aggregate_centers(array_ids, rfx, rfy):
+    valid = np.isfinite(rfx) & np.isfinite(rfy)
+    centers = []
+    for a in sorted(np.unique(array_ids)):
+        mask = (array_ids == a) & valid
+        centers.append((a, np.nanmean(rfx[mask]), np.nanmean(rfy[mask])))
+    centers = np.array(centers)
+    return {
+        "array": centers[:, 0].astype(int),
+        "rfx": centers[:, 1],
+        "rfy": centers[:, 2],
+    }
+
+
+def load_rf_centers_csv(csv_path, aggregate=False):
     """
     Load RF centers saved as CSV with header: array,rfx,rfy.
     Returns array_ids, rfx, rfy.
@@ -48,18 +73,41 @@ def load_rf_centers_csv(csv_path):
     data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
     if data.ndim == 1:
         data = data[None, :]
-    centers_dict = {
-        "array": data[:, 0].astype(int),
-        "rfx": (((data[:, 1]) * 7.8) - 100) / PIX_PER_DEG, # / PIX_PER_DEG,
-        "rfy": (((data[:, 2]) * 7.8) - 100) / PIX_PER_DEG * -1 # / PIX_PER_DEG,  # invert y-axis
-    }
+    array_ids = data[:, 0].astype(int)
+    rfx = (((data[:, 1]) * 7.8) - 100) / PIX_PER_DEG  # / PIX_PER_DEG,
+    rfy = (((data[:, 2]) * 7.8) - 100) / PIX_PER_DEG * -1  # / PIX_PER_DEG, invert y-axis
+    centers_dict = {"array": array_ids, "rfx": rfx, "rfy": rfy}
 
+    if aggregate:
+        return _aggregate_centers(array_ids, rfx, rfy)
     return centers_dict
+
+def load_nilson_array_centers(mapping_path, aggregate=False):
+    """
+    Load Nilson RF centers from mapping_MrNilson.pkl.
+    Returns dict with keys: array, rfx, rfy.
+    aggregate=False -> one entry per electrode
+    aggregate=True -> one entry per array (nanmean of electrodes)
+    """
+    with open(mapping_path, "rb") as f:
+        m = pickle.load(f)
+    rfx = m["RFX"]
+    rfy = m["RFY"]
+    array_ids = m["arrayNumbers"].astype(int)
+    if not aggregate:
+        return {
+            "array": array_ids,
+            "rfx": rfx,
+            "rfy": rfy,
+        }
+    return _aggregate_centers(array_ids, rfx, rfy)
 
 #%%
 def plot_rf_arena(
-    xlim=(-2, 8),
-    ylim=(-7.5, 3.1),
+    # xlim=(-2, 8),
+    # ylim=(-7.5, 3.1),
+    xlim=(-3, 10),
+    ylim=(-10, 3),
     center=(0, 0),
     radius=8,
     num_circles=4,
@@ -154,7 +202,7 @@ def plot_rf_arena_compare(
     num_circles=4,
     figsize=(6, 6),
     dpi=200,
-    title="RF Arena - GLM vs STA",
+    title="auto",
 ):
     """
     Plot RF coordinate system and compare multiple center-estimation methods.
@@ -181,6 +229,14 @@ def plot_rf_arena_compare(
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_aspect("equal")
+    if title == "auto" or title is None:
+        names = list(centers_by_method.keys())
+        if not names:
+            title = "RF Arena"
+        elif len(names) == 1:
+            title = f"RF Arena - {names[0]}"
+        else:
+            title = "RF Arena - " + " vs ".join(names[:5])
     ax.set_title(title)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -265,22 +321,130 @@ def plot_rf_arena_compare(
     plt.tight_layout()
     plt.show()
 
+def _centers_to_vectors(centers, match="array"):
+    rfx = centers["rfx"]
+    rfy = centers["rfy"]
+    valid = np.isfinite(rfx) & np.isfinite(rfy)
+
+    if match == "array":
+        array_ids = centers["array"]
+        data = {}
+        for a, x, y, ok in zip(array_ids, rfx, rfy, valid):
+            if ok:
+                data[int(a)] = (float(x), float(y))
+        return data
+
+    coords = np.column_stack([rfx[valid], rfy[valid]])
+    return coords
+
+
+def plot_pairwise_correlations(centers_by_method, match="array", title=None, figsize=(5, 3), dpi=200):
+    method_names = list(centers_by_method.keys())
+    pairs = list(combinations(method_names, 2))
+    if not pairs:
+        print("[RF_ARENA] Not enough methods for pairwise correlation.")
+        return
+
+    corrs = []
+    labels = []
+    for a, b in pairs:
+        c1 = _centers_to_vectors(centers_by_method[a], match=match)
+        c2 = _centers_to_vectors(centers_by_method[b], match=match)
+
+        if match == "array":
+            shared = sorted(set(c1.keys()) & set(c2.keys()))
+            if not shared:
+                corr = np.nan
+            else:
+                v1 = np.array([c1[k] for k in shared]).reshape(-1)
+                v2 = np.array([c2[k] for k in shared]).reshape(-1)
+                corr = np.corrcoef(v1, v2)[0, 1] if v1.size > 1 else np.nan
+        else:
+            n = min(len(c1), len(c2))
+            if n == 0:
+                corr = np.nan
+            else:
+                v1 = c1[:n].reshape(-1)
+                v2 = c2[:n].reshape(-1)
+                corr = np.corrcoef(v1, v2)[0, 1] if v1.size > 1 else np.nan
+
+        corrs.append(corr)
+        labels.append(f"{a} vs {b}")
+
+    if title is None:
+        title = f"Pairwise correlation ({match})"
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    ax.bar(labels, corrs, color="gray")
+    ax.set_ylim(-1.0, 1.0)
+    ax.set_ylabel("Pearson r")
+    ax.set_title(title)
+    ax.axhline(0, color="black", linewidth=0.5)
+    plt.tight_layout()
+    plt.show()
 # %% 
 rf_lin_dir =  join(ana_monkey_dir, 'Exploration', 'ReceptiveFields', 'linear')
 
 basename_sta = f"{monkey}_STA_RFs_params_{shuffle_suffix}"
-basename_glm = f"{monkey}_GLM_RFs_params_{shuffle_suffix}"
+basename_glm = f"{monkey}_GLM_{GLM_MODEL}_RFs_params_{shuffle_suffix}"
 
 sta_path = os.path.join(rf_lin_dir, "STA", f"{basename_sta}_rf_centers_per_array.csv")
 glm_path = os.path.join(rf_lin_dir, "GLM", f"{basename_glm}_rf_centers_per_array.csv")
+sta_path_ch = os.path.join(rf_lin_dir, "STA", f"{basename_sta}_rf_centers_per_channel.csv")
+glm_path_ch = os.path.join(rf_lin_dir, "GLM", f"{basename_glm}_rf_centers_per_channel.csv")
 
-sta_centers = load_rf_centers_csv(sta_path)
-glm_centers = load_rf_centers_csv(glm_path)
+sta_centers = load_rf_centers_csv(sta_path, aggregate=ARRAY_AGGREGATE)
+glm_centers = load_rf_centers_csv(glm_path, aggregate=ARRAY_AGGREGATE)
+sta_centers_ch = load_rf_centers_csv(sta_path_ch, aggregate=False)
+glm_centers_ch = load_rf_centers_csv(glm_path_ch, aggregate=False)
 
-arena_centers = {
-    "STA": sta_centers,
-    "GLM": glm_centers
+mapping_root = r"E:\radboud\Masters Thesis\analysis\TVSD"
+mapping_file_path = os.path.join(
+    r"C:\Users\Radovan\OneDrive\Radboud\a_Internship\Antonio Lonzano\root\SlavsForSight\code\NIN_canon\MAPPING",
+    "results",
+    "mapping_MrNilson.pkl",
+)
+nilson_centers = load_nilson_array_centers(mapping_file_path, aggregate=ARRAY_AGGREGATE)
+nilson_centers_ch = load_nilson_array_centers(mapping_file_path, aggregate=False)
+# def arrays
+compare_modes = (COMPARE_MODES,) if isinstance(COMPARE_MODES, str) else COMPARE_MODES
+compare_levels = (COMPARE_LEVELS,) if isinstance(COMPARE_LEVELS, str) else COMPARE_LEVELS
+
+channel_by_mode = {
+    "STA": sta_centers_ch,
+    "GLM": glm_centers_ch,
+    "Nilson": nilson_centers_ch,
 }
+channel_centers = {k: channel_by_mode[k] for k in compare_modes}
+
+centers_by_mode = {
+    "STA": sta_centers,
+    "GLM": glm_centers,
+    "Nilson": nilson_centers,
+}
+use_channel_for_arena = PLOT_LEVEL == "channel"
+arena_centers = {
+    k: (channel_by_mode[k] if use_channel_for_arena else centers_by_mode[k])
+    for k in compare_modes
+}
+
+# %% exec
 plot_rf_arena_compare(centers_by_method=arena_centers)
+if COMPARE:
+    if "array" in compare_levels:
+        plot_pairwise_correlations(
+            centers_by_method=arena_centers,
+            match="array",
+            title="Pairwise correlation (array)",
+        )
+
+    if "channel" in compare_levels:
+        plot_pairwise_correlations(
+            centers_by_method=channel_centers,
+            match="index",
+            title="Pairwise correlation (channel)",
+        )
 
 # %%
+
+

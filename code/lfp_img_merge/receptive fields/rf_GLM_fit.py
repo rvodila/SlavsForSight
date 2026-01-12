@@ -1,9 +1,9 @@
 # %% ---------- CONFIG ----------
 METHOD = 'GLM'  # 'GLM' 
-PIX_PER_DEG_THINGS = 25.8601  # pixels per degree, from mapping.py
+MODEL = 'ridge' # 'ridge', 'lasso', 'elastinet'
 monkey = 'monkeyN' # monkeyF
 out_size = (64, 64)  # RF grid resolution: 64x64| "sensors" (stimulus pixels); 128 is already crashing my system
-n_subset = 1000 # random subset of >22248 images in train set
+n_subset = 10000 # random subset of >22248 images in train set
 E_SUBSET = None # None
 if E_SUBSET is not None:
     assert E_SUBSET % 64 == 0
@@ -12,8 +12,8 @@ reg = None #l1, l2, elastic
 VERBOSE = False
 # ElasticNet for a balance between sparsity and smoothness
 # l1 ~
-alpha = 0.1
-l1_ratio = 0.7
+alpha = 0.15
+l1_ratio = 0.8
 # Vis
 vlim = (-1e-3, 1e-3)# 
 # %%
@@ -327,7 +327,7 @@ else:
         order = 'ordered'
         shuffle_suffix = 'true_order'
 
-save_dir = join(derivatives_rf_dir, 'linear', "f{METHOD}")
+save_dir =  join(ana_monkey_dir, 'Exploration', 'ReceptiveFields', f'{METHOD}')
 os.makedirs(save_dir, exist_ok=True)
 
 data_fname = f"{monkey}_X_R_imgshape{len(idxs)}_{order}.npz"
@@ -358,6 +358,7 @@ if loading:
 from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
+
 # ---------- FIT GLM ----------
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
@@ -376,8 +377,15 @@ for i in range(E):
 
         # ElasticNet for a balance between sparsity and smoothness
         # l1 ~
-        model = ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
+        if MODEL == "elastinet":
+            model = ElasticNet(alpha=alpha, l1_ratio=l1_ratio)
+        elif MODEL == 'ridge':
+            model = Ridge(alpha=1.0)
+        elif MODEL == 'lasso':
+            model = Lasso(alpha=0.1)
+
         model.fit(X_scaled, y)
+
         RFs[i] = model.coef_ # shape [n_shanks, 4096]
 
 # %%
@@ -403,7 +411,8 @@ elif monkey == 'monkeyF':
 # RFs: (1024, , W') CARTESIAN
 n_arrays = E // 64
 RFs_reshaped = RFs.reshape(E, 64, 64)  # shape (n_elec, 64, 64)
-rf_per_array = RFs_reshaped.reshape(int(E/64), 64, 64, 64).mean(axis=1)  # shape (16, 64, 64, 64)
+rf_per_channel_model = -RFs_reshaped
+rf_per_array = RFs_reshaped.reshape(int(E / 64), 64, 64, 64).mean(axis=1)  # shape (16, 64, 64)
                                                                                   #^ nr. of electrodes under investigation
 # RFs: (1024, , W') Estimate center and SIZE form RF maps
 # %% Coordinate grid (pixel indices)
@@ -436,21 +445,33 @@ for i in range(rf_per_array_model.shape[0]):
     rfx_arr[i] = mx
     rfy_arr[i] = my
 
+rfx_chan = np.full(E, np.nan, dtype=float)
+rfy_chan = np.full(E, np.nan, dtype=float)
+for i in range(E):
+    mx, my = rf_center_top_percentile(rf_per_channel_model[i], pct=center_pct, use_abs=True)
+    rfx_chan[i] = mx
+    rfy_chan[i] = my
+
 def qstats(x):
     return np.nanmin(x), np.nanmedian(x), np.nanmax(x)
 
 valid = np.isfinite(rfx_arr) & np.isfinite(rfy_arr)
 rfx_v = rfx_arr[valid]
 rfy_v = rfy_arr[valid]
-print("[DIAG] GLM RF center stats (rfx) min/med/max:", qstats(rfx_v))
-print("[DIAG] GLM RF center stats (rfy) min/med/max:", qstats(rfy_v))
-print("[DIAG] GLM image size (H, W):", (H, W))
+# print("[DIAG] GLM RF center stats (rfx) min/med/max:", qstats(rfx_v))
+# print("[DIAG] GLM RF center stats (rfy) min/med/max:", qstats(rfy_v))
+# print("[DIAG] GLM image size (H, W):", (H, W))
 
-basename_params = f"{monkey}_{METHOD}_RFs_params_{shuffle_suffix}"
+basename_params = f"{monkey}_{METHOD}_{MODEL}_RFs_params_{shuffle_suffix}"
 params_save_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_array.csv")
 coords = np.column_stack([np.arange(1, rfx_arr.shape[0] + 1), rfx_arr, rfy_arr])
 np.savetxt(params_save_path, coords, delimiter=",", header="array,rfx,rfy", comments="")
 print(f"[MAIN] Saved GLM RF centers to: {params_save_path}")
+
+coords_chan = np.column_stack([np.repeat(np.arange(1, n_arrays + 1), 64), rfx_chan, rfy_chan])
+coords_chan_path = os.path.join(save_dir, f"{basename_params}_rf_centers_per_channel.csv")
+np.savetxt(coords_chan_path, coords_chan, delimiter=",", header="array,rfx,rfy", comments="")
+print(f"[MAIN] Saved GLM RF channel centers to: {coords_chan_path}")
 
 # %% Plotting
 params_per_array = None #{"RFX": rfx_arr, "RFY": rfy_arr}
